@@ -1,0 +1,15 @@
+
+services:
+  curio-brain:
+    build: .
+    image: curio-brain:latest
+    container_name: curio_brain_container
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    restart: always
+    environment:
+      - PYTHONUNBUFFERED=1

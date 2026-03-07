@@ -1,0 +1,54 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+newvenv/
+newvenv
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Logs and debug
+*.log
+logs/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# IDE / editor settings
+.vscode/
+.idea/
+*.code-workspace
+
+# OS-specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python tooling
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Audio / recordings (uncomment if you don't want these tracked)
+recordings/
+transcripts/
+
+# 3D models (uncomment if you don't want these tracked)
+# 3D Model/
+
+generated_pptx/
+test_output
+uploads/

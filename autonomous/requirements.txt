@@ -1,0 +1,23 @@
+fastapi
+uvicorn
+langgraph
+google-genai
+pydantic
+pydantic-settings
+aiohttp
+requests
+faiss-cpu
+numpy
+Pillow
+python-dotenv
+transformers
+huggingface_hub[hf_xet]
+ddgs
+google-search-results
+scalar-fastapi
+# torch
+# torchvision
+sentence-transformers
+reverie-sdk
+soundfile
+supabase

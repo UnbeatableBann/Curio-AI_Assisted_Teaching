@@ -1,122 +1,238 @@
-# AI-Powered Smartboard Teaching Assistant  (THIS PROJECT STILL IN PROGRESS. NOT FINISHED YET)
+# Curio AI Co-Teacher
 
-## Overview
-This project aims to build an AI-powered smartboard application designed to assist teachers in the classroom. It integrates **Agentic AI** to generate images, videos, GIFs, quizzes, and summarize lessons based on teacher queries. The application enhances classroom interaction by allowing teachers to query the AI for visual aids, explanations, and class summaries, all while keeping track of class progress and student engagement.
+Curio AI Co-Teacher is a multi-service classroom assistant that supports:
+- Autonomous classroom understanding from streamed audio
+- AI tools (quiz, images, summary)
+- Smart notebook generation from saved class memory
+- AI-powered PPT generation from uploaded classroom documents
 
-## Features
-- **Voice Recognition**: Detects voice commands to generate real-time responses, images, or quizzes.
-- **Interactive Visuals**: Generates and displays images, GIFs, or videos based on teacher queries (e.g., "Show me a diagram of the human heart").
-- **Real-Time Class Summarization**: AI can summarize class sessions and answer questions like "What did we study yesterday?" using previously stored audio recordings.
-- **Quiz Generation**: Automatically creates quizzes based on the topic being taught or specific queries from the teacher.
-- **Syllabus & Lesson Planning Assistance**: Suggests lesson plans based on curriculum progress and class needs.
-- **AI-Powered Explanations**: Provides simple, AI-generated explanations for complex topics.
-- **Multi-Agent System**: Different agents manage specific tasks like generating visuals, creating quizzes, summarizing sessions, and suggesting content.
+This repository is a monorepo with separate backend services and one React frontend.
 
-## Technologies Used
-- **Python**: Core language for developing the application.
-- **PyQt5**: GUI framework for building the desktop application interface.
-- **Whisper API**: For speech-to-text conversion.
-- **OpenAI GPT**: For generating AI-based explanations, quizzes, and content suggestions.
-- **FAISS**: For storing and retrieving semantic memory of class sessions.
-- **SQLite**: For storing past lessons, class summaries, and student interactions.
-- **gTTS / pyttsx3**: For text-to-speech capabilities for voice-based feedback.
-- **Pillow / OpenCV**: For handling and displaying images and visual content.
+## Project Structure
 
-## Installation
+```text
+Curio-AI-Co-Teacher/
+├── autonomous/                # Main autonomous brain API (FastAPI, LangGraph)
+│   ├── main.py
+│   ├── brain/
+│   │   ├── brain.py
+│   │   ├── brain_state.py
+│   │   └── db.py
+│   ├── tools/
+│   │   ├── quiz_tool/
+│   │   ├── images_tool/
+│   │   └── summary_tool/
+│   ├── config/
+│   │   ├── settings.py
+│   │   └── logger.py
+│   ├── Dockerfile
+│   └── docker-compose.yml
+├── smart_notebook/            # Smart notebook API (FastAPI)
+│   ├── main.py
+│   ├── router.py
+│   ├── generator.py
+│   ├── visual_generator.py
+│   └── db.py
+├── ai-ppt-generator/          # PPT generation API (FastAPI)
+│   ├── main.py
+│   ├── vector_store.py
+│   ├── slidetext_generator.py
+│   ├── visual_generator.py
+│   ├── ppt_export.py
+│   └── classifier.py
+├── frontend/                  # React web app
+│   ├── package.json
+│   └── src/components/
+├── audio/                     # Local audio pipeline utilities (recorder/transcriber/wakeword)
+├── uploads/                   # Uploaded documents runtime folder
+├── generated_pptx/            # Generated presentations runtime folder
+└── README.md
+```
 
-### Prerequisites
-Ensure you have Python 3.7+ installed.
+## How It Works
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/yourusername/smartboard-teaching-assistant.git
-   cd smartboard-teaching-assistant
-'''
-2. **Install dependencies: Install the required Python packages using pip:**
+### 1. Autonomous Classroom Flow (`autonomous/`)
+
+1. Frontend records microphone audio in browser and sends PCM chunks to `POST /transcribe-bytes`.
+2. Autonomous API transcribes chunks via Reverie SDK.
+3. Transcript text is sent to LangGraph brain (`process_transcript`).
+4. Brain pipeline runs:
+   - `analyze`: infer topic/subtopic/phase/summary
+   - `plan`: create current + future actions
+   - `execute`: run tools (quiz/image/summary)
+5. Results are broadcast to frontend over `ws://localhost:8000/ws/home`.
+6. On stop (`POST /stop`), brain state is saved to Supabase (`brain_memory` table).
+
+### 2. Smart Notebook Flow (`smart_notebook/`)
+
+1. Smart Notebook API reads latest autonomous brain state from Supabase via `brain_db.get_latest_state()`.
+2. Gemini generates structured student notes.
+3. Optional educational visual is generated (Gemini image model) and returned as Base64.
+4. Final note is stored in Supabase (`smart_notes` table).
+5. Frontend page fetches notes from `GET http://localhost:8002/notebook/all`.
+
+### 3. PPT Generation Flow (`ai-ppt-generator/`)
+
+1. User uploads docs via frontend to `POST /api/upload-doc`.
+2. Service extracts text, stores embeddings in FAISS, and classifies content.
+3. User provides topic via `POST /api/generate-ppt`.
+4. Service performs retrieval + generation, creates slide content, exports `.pptx`.
+5. File download is available at `GET /api/download-ppt/{filename}`.
+
+## Server Communication Model
+
+### Current Communication Paths
+
+- `frontend -> autonomous` via HTTP + WebSocket (`:8000`)
+- `frontend -> smart_notebook` via HTTP (`:8002`)
+- `frontend -> ai-ppt-generator` via HTTP (`:8000` in that service)
+- `autonomous -> Supabase` for brain memory persistence
+- `smart_notebook -> Supabase` for reading brain memory and saving notes
+- `autonomous/smart_notebook/ai-ppt-generator -> Gemini/Reverie/other external APIs`
+
+### Important Note About Ports
+
+Both `autonomous/main.py` and `ai-ppt-generator/main.py` are configured to run on port `8000` by default. They cannot run on the same host port at the same time without changing one port or adding a reverse proxy/API gateway.
+
+### Service Coupling
+
+- Smart Notebook does not call Autonomous over REST.
+- It imports shared Python modules (`autonomous.config.*`, `autonomous.brain.db`) and uses the same Supabase backend.
+- This is tight code-level coupling inside one monorepo Python environment.
+
+## APIs Overview
+
+### Autonomous API (`autonomous/main.py`)
+
+- `GET /api/health`
+- `POST /transcribe-bytes`
+- `POST /process`
+- `GET /state`
+- `POST /reset`
+- `POST /stop`
+- `POST /tools/quiz`
+- `POST /tools/image`
+- `POST /tools/summary`
+- `WS /ws/home`
+
+### Smart Notebook API (`smart_notebook/main.py`)
+
+- `GET /health`
+- `POST /notebook/generate`
+- `POST /notebook/create-from-latest`
+- `GET /notebook/all`
+
+### PPT Generator API (`ai-ppt-generator/main.py`)
+
+- `GET /api/health`
+- `POST /api/upload-doc`
+- `POST /api/generate-ppt`
+- `GET /api/download-ppt/{filename}`
+- `WS /ws/home` (placeholder/mock loop)
+
+## Tech Stack By Component
+
+### Frontend (`frontend/`)
+
+- React 18
+- React Router
+- Framer Motion
+- Lucide React
+- React Markdown
+- Browser APIs: MediaDevices, Web Audio, WebSocket, Fetch
+
+### Autonomous Service (`autonomous/`)
+
+- FastAPI + Uvicorn
+- LangGraph (stateful workflow orchestration)
+- Gemini (`google-genai`) for reasoning and planning
+- Reverie SDK for STT (audio-to-text)
+- Supabase Python client for persistence
+- FAISS + sentence-transformers + HuggingFace (image retrieval/ranking)
+- Scalar for API docs (`/scalar`)
+- Docker + Docker Compose
+
+### Smart Notebook Service (`smart_notebook/`)
+
+- FastAPI + APIRouter
+- Gemini text generation for note synthesis
+- Gemini image generation for notebook visuals
+- Supabase persistence (`smart_notes`)
+- Reuses Autonomous settings/logger/database access modules
+
+### PPT Generator Service (`ai-ppt-generator/`)
+
+- FastAPI + Uvicorn + python-multipart
+- LangChain ecosystem (`langchain`, `langchain-community`, `langchain-google-genai`)
+- FAISS vector index
+- Document parsing: PyMuPDF, python-docx, python-pptx
+- Pillow + HuggingFace Hub + Requests for visuals/assets
+- Scalar docs
+
+### Audio Utilities (`audio/`)
+
+- Local orchestration classes for:
+  - Continuous PCM recording
+  - Wake word pipeline integration
+  - Command capture and transcription
+  - WAV export and transcript generation
+
+## Environment Variables
+
+Primary environment loading is handled in `autonomous/config/settings.py` (from `../.env`).
+
+Key variables used across services include:
+- `GEMINI_API_KEY`
+- `REVERIE_API_KEY`, `REVERIE_APP_ID`
+- `SUPABASE_URL`, `SUPABASE_KEY`
+- `GOOGLE_SEARCH_API_KEY`, `GOOGLE_CX`, `SERPAPI_KEY`
+- `UNSPLASH_ACCESS_KEY`
+- `PICOVOICE_API_KEY`, `WAKEUP_WORD_PATH`
+- `APPWRITE_*`
+
+For PPT service-specific setup, see `ai-ppt-generator/.env.example`.
+
+## Local Run Guide
+
+### 1. Frontend
 
 ```bash
-pip install -r requirements.txt
-```
-3. Install additional libraries (if needed):
-- PyQt5 for GUI development
-- Whisper API for speech recognition
-- OpenAI GPT for AI-powered text generation
-
-4. Set up an GEMINI API key: Sign up at Gemini and get your API key. Add the key to your environment variables:
-```
-bash
-export OPENAI_API_KEY="your-api-key"
-```
-## Running the Application
-After setting up the dependencies, you can start the application by running:
-```
-bash
-python app.py
+cd frontend
+npm install
+npm start
 ```
 
-## Folder Structure
-```
-bash
-smartboard_ai/
-├── gui/                     # PyQt5 interface files
-│   ├── main_window.py       # Main window for smartboard interface
-│   └── output_display.py    # Handles display of generated content
-├── audio/                   # Audio handling files
-│   ├── recorder.py          # Handles voice input and speech-to-text
-│   └── wake_word.py         # Detects wake word for triggering actions
-├── ai_engine/               # Core AI functionality
-│   ├── planner.py           # Handles task delegation to agents
-│   ├── image_gen.py         # Visual content generation
-│   ├── quiz_gen.py          # Quiz generation logic
-│   ├── summarizer.py        # Class session summarization
-│   └── chem_lab_agent.py    # Placeholder for future Chemistry Lab integration
-├── memory/                  # Stores class history and memory
-│   └── context_manager.py   # Manages class memory and interactions
-├── database/                # Stores SQLite database for session storage
-├── assets/                  # Contains images, icons, or media files
-├── requirements.txt         # List of required Python packages
-└── app.py                   # Main application entry point
+### 2. Autonomous API (default port 8000)
 
+```bash
+uvicorn autonomous.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-## How to Use
-1. Start the Application: Once the app is running, you'll be presented with a smartboard interface. The teacher can speak into the microphone or type commands into the text input box.
+### 3. Smart Notebook API (default port 8002)
 
-2. Voice Commands:
-- "Show me a diagram of the heart."
-- "Can you summarize today's lesson?"
-- "Generate a quiz on photosynthesis."
+```bash
+uvicorn smart_notebook.main:app --host 0.0.0.0 --port 8002 --reload
+```
 
-3. Real-Time Interaction: The AI will respond by:
-- Displaying generated images or videos.
-- Summarizing class content.
-- Creating and displaying interactive quizzes.
+### 4. PPT Generator API
 
-4. End of Class Summary: The teacher can ask, "What did we study yesterday?" or "Summarize the class," and the AI will pull the information from past sessions and provide a summary.
+If autonomous is already using `8000`, run PPT API on another port:
 
-## 📸 Screenshots
+```bash
+cd ai-ppt-generator
+uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+```
 
-### 🖥️ Main Smartboard Interface
-![Smartboard Interface](screenshots/smartboard_interface.png)
+Then update frontend API URLs or proxy config accordingly.
 
-### 🎤 Voice Command in Action
-![Voice Command](screenshots/voice_command.png)
+## Known Integration Gaps
 
-### 🧠 AI-Generated Quiz
-![Quiz Generation](screenshots/quiz_generation.png)
-
-### 📊 Class Summary View
-![Class Summary](screenshots/class_summary.png)
-
-
-## Future Enhancements
-- Chemistry Virtual Lab: Add interactive chemical reactions and lab simulations.
-- AI-Assisted Grade Tracking: Track student progress through quizzes and performance metrics.
-- Enhanced Visual Content: Use more advanced models for 3D rendering or animations.
-- Real-time Feedback: Provide real-time feedback on student understanding based on quiz performance.
-
-## Contributing
-If you'd like to contribute to this project, feel free to fork the repository and submit a pull request with your enhancements or bug fixes. Please ensure your code is well-documented and follows the style guide.
+- Hardcoded frontend URLs currently target localhost ports directly.
+- No API gateway/unified backend routing yet.
+- `autonomous` and `ai-ppt-generator` default port conflict (`8000`).
+- Smart Notebook is coupled to autonomous Python modules rather than independent service contracts.
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+
+This project is intended for educational and research usage. Ensure compliance with API provider terms and local regulations for classroom audio processing.
+
